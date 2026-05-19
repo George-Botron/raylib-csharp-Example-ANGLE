@@ -17,13 +17,13 @@ function Assert-File([string]$Path) {
 function Invoke-LoggedCommand {
     param(
         [Parameter(Mandatory = $true)][string]$Exe,
-        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Args
+        [Parameter(Mandatory = $true)][string[]]$CommandArgs
     )
 
-    Write-Host "> $Exe $($Args -join ' ')"
-    & $Exe @Args
+    Write-Host "> $Exe $($CommandArgs -join ' ')"
+    & $Exe @CommandArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "Command failed with exit code ${LASTEXITCODE}: $Exe $($Args -join ' ')"
+        throw "Command failed with exit code ${LASTEXITCODE}: $Exe $($CommandArgs -join ' ')"
     }
 }
 
@@ -58,22 +58,11 @@ if (Test-Path $RaylibDir) {
     Remove-Item -Recurse -Force $RaylibDir
 }
 
-Invoke-LoggedCommand git clone --depth 1 --branch $RaylibRef $RaylibRepo $RaylibDir
+Invoke-LoggedCommand "git" @("clone", "--depth", "1", "--branch", $RaylibRef, $RaylibRepo, $RaylibDir)
 
 $libraryConfig = Join-Path $RaylibDir "cmake/LibraryConfigurations.cmake"
 Assert-File $libraryConfig
 
-# raylib knows how to create an OpenGL ES context when OPENGL_VERSION="ES 2.0".
-# The missing Windows Desktop piece is the native link step. raylib normally links
-# desktop Windows builds to opengl32. For the ANGLE build, replace only this block:
-#
-#   elseif (WIN32)
-#     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-#     find_package(OpenGL QUIET)
-#     set(LIBS_PRIVATE ${OPENGL_LIBRARIES} winmm)
-#
-# with libEGL/libGLESv2. This regex is deliberately whitespace-tolerant so it works
-# with raylib 5.5/6.0 files whether CMake content is formatted on one line or many.
 $text = Get-Content $libraryConfig -Raw
 $marker = 'Desktop Windows OpenGL ES selected: linking raylib against ANGLE libEGL/libGLESv2'
 $pattern = '(?s)elseif\s*\(\s*WIN32\s*\)\s*add_definitions\s*\(\s*-D_CRT_SECURE_NO_WARNINGS\s*\)\s*find_package\s*\(\s*OpenGL\s+QUIET\s*\)\s*set\s*\(\s*LIBS_PRIVATE\s+\$\{OPENGL_LIBRARIES\}\s+winmm\s*\)'
@@ -113,22 +102,25 @@ New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 $toolchain = Join-Path $VcpkgRoot "scripts/buildsystems/vcpkg.cmake"
 Assert-File $toolchain
 
-Invoke-LoggedCommand cmake -S $RaylibDir -B $BuildDir `
-    -G "Visual Studio 17 2022" `
-    -A x64 `
-    -DCMAKE_TOOLCHAIN_FILE="$toolchain" `
-    -DVCPKG_TARGET_TRIPLET="$Triplet" `
-    -DCMAKE_PREFIX_PATH="$AngleInstalled" `
-    -DCMAKE_INCLUDE_PATH="$AngleInclude" `
-    -DCMAKE_LIBRARY_PATH="$AngleLib" `
-    -DPLATFORM=Desktop `
-    -DOPENGL_VERSION="ES 2.0" `
-    -DBUILD_SHARED_LIBS=ON `
-    -DBUILD_EXAMPLES=OFF `
-    -DUSE_AUDIO=ON `
-    -DCMAKE_BUILD_TYPE=$Configuration
+Invoke-LoggedCommand "cmake" @(
+    "-S", $RaylibDir,
+    "-B", $BuildDir,
+    "-G", "Visual Studio 17 2022",
+    "-A", "x64",
+    "-DCMAKE_TOOLCHAIN_FILE=$toolchain",
+    "-DVCPKG_TARGET_TRIPLET=$Triplet",
+    "-DCMAKE_PREFIX_PATH=$AngleInstalled",
+    "-DCMAKE_INCLUDE_PATH=$AngleInclude",
+    "-DCMAKE_LIBRARY_PATH=$AngleLib",
+    "-DPLATFORM=Desktop",
+    "-DOPENGL_VERSION=ES 2.0",
+    "-DBUILD_SHARED_LIBS=ON",
+    "-DBUILD_EXAMPLES=OFF",
+    "-DUSE_AUDIO=ON",
+    "-DCMAKE_BUILD_TYPE=$Configuration"
+)
 
-Invoke-LoggedCommand cmake --build $BuildDir --config $Configuration --parallel
+Invoke-LoggedCommand "cmake" @("--build", $BuildDir, "--config", $Configuration, "--parallel")
 
 $raylibDll = Get-ChildItem $BuildDir -Recurse -Filter raylib.dll | Where-Object { $_.FullName -match "\\$Configuration\\" } | Select-Object -First 1
 if (!$raylibDll) {
