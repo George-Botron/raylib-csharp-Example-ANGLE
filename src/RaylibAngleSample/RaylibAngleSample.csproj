@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Raylib-cs" Version="7.*" />
+  </ItemGroup>
+
+  <!--
+    These native files are produced by .github/workflows/build-raylib-angle.yml.
+    They deliberately override the native raylib.dll that may come from the NuGet package.
+  -->
+  <ItemGroup>
+    <None Include="native\win-x64\raylib.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\win-x64\raylib.dll')" />
+    <None Include="native\win-x64\libEGL.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\win-x64\libEGL.dll')" />
+    <None Include="native\win-x64\libGLESv2.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\win-x64\libGLESv2.dll')" />
+    <None Include="native\win-x64\d3dcompiler_47.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\win-x64\d3dcompiler_47.dll')" />
+  </ItemGroup>
+
+  <Target Name="VerifyAngleNativeFiles" BeforeTargets="Build" Condition="'$(RuntimeIdentifier)' == 'win-x64'">
+    <Message Importance="High" Text="Using native raylib ANGLE files from src/RaylibAngleSample/native/win-x64 when present." />
+  </Target>
+
+</Project>
