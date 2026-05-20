@@ -24,6 +24,10 @@ native/
   libEGL.dll
   libGLESv2.dll
   d3dcompiler_47.dll       optional, copied when available
+  zlib1.dll                if required by the vcpkg ANGLE build
+  vcruntime140.dll         if available from the MSVC redist folder
+  msvcp140.dll             if available from the MSVC redist folder
+  ...                      every DLL from C:\vcpkg\installed\x64-windows\bin
 
 RaylibAngleSample/
   RaylibAngleSample.exe
@@ -31,6 +35,8 @@ RaylibAngleSample/
   raylib.dll
   libEGL.dll
   libGLESv2.dll
+  zlib1.dll                if required
+  VC++ runtime DLLs        if packaged
   ...
 ```
 
@@ -72,23 +78,26 @@ In your external project, keep using the normal raylib-cs NuGet package:
 </ItemGroup>
 ```
 
-Then copy these files from the artifact into your project, for example:
+Then copy the **entire** `native/` folder from the artifact into your project. Do not copy only `raylib.dll`, `libEGL.dll`, and `libGLESv2.dll`; the ANGLE build may also need transitive DLLs such as `zlib1.dll` and VC++ runtime DLLs.
+
+Example project layout:
 
 ```text
 native/win-x64/raylib.dll
 native/win-x64/libEGL.dll
 native/win-x64/libGLESv2.dll
 native/win-x64/d3dcompiler_47.dll
+native/win-x64/zlib1.dll                 if present in the artifact
+native/win-x64/vcruntime140.dll          if present in the artifact
+native/win-x64/msvcp140.dll              if present in the artifact
 ```
 
-Add this to your `.csproj`:
+Add this to your `.csproj` so every packaged native DLL is copied:
 
 ```xml
 <ItemGroup>
-  <None Include="native\win-x64\raylib.dll" CopyToOutputDirectory="PreserveNewest" />
-  <None Include="native\win-x64\libEGL.dll" CopyToOutputDirectory="PreserveNewest" />
-  <None Include="native\win-x64\libGLESv2.dll" CopyToOutputDirectory="PreserveNewest" />
-  <None Include="native\win-x64\d3dcompiler_47.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\win-x64\d3dcompiler_47.dll')" />
+  <None Include="native\win-x64\*.dll" CopyToOutputDirectory="PreserveNewest" />
+  <None Include="native\win-x64\build-info.txt" CopyToOutputDirectory="PreserveNewest" Condition="Exists('native\win-x64\build-info.txt')" />
 </ItemGroup>
 ```
 
@@ -98,15 +107,7 @@ Build for Windows x64:
 dotnet build -c Release -r win-x64 --self-contained false
 ```
 
-Your output folder must contain:
-
-```text
-YourApp.exe
-Raylib_cs.dll
-raylib.dll
-libEGL.dll
-libGLESv2.dll
-```
+Your output folder must contain `Raylib_cs.dll`, `raylib.dll`, `libEGL.dll`, `libGLESv2.dll`, and every additional DLL present in the artifact's `native/` folder. If `zlib1.dll` is in the artifact, it must also be beside your `.exe`.
 
 ## Minimal C# example
 
@@ -200,6 +201,10 @@ dumpbin /dependents .\bin\Release\net10.0-windows\win-x64\raylib.dll
 
 Copy them beside your `.exe`. They must be in the same folder as `raylib.dll`, or otherwise resolvable by the Windows DLL loader.
 
+### `DllNotFoundException: Unable to load DLL 'raylib' or one of its dependencies`
+
+This usually means `raylib.dll` is present but a transitive dependency is missing. Copy the whole artifact `native/` folder beside your executable, especially DLLs such as `zlib1.dll`, `vcruntime140.dll`, and `msvcp140.dll` if they are present. The included CI smoke test runs `RaylibAngleSample.exe --load-test` to catch this before upload.
+
 ### Missing `d3dcompiler_47.dll`
 
 Modern Windows usually has it in `System32`, but self-contained app folders can include it. If the workflow copied it into the artifact, ship it beside the app.
@@ -238,3 +243,40 @@ raylib.dll must not import OPENGL32.dll
 libEGL.dll must be packaged beside raylib.dll
 libEGL.dll does not have to appear as a direct dumpbin dependency of raylib.dll
 ```
+
+
+## Native dependency packaging note
+
+The sample must contain more than only:
+
+```text
+raylib.dll
+libEGL.dll
+libGLESv2.dll
+```
+
+With vcpkg's dynamic Windows triplet (`x64-windows`), transitive DLLs from
+`C:\vcpkg\installed\x64-windows\bin` may also be required, for example
+`zlib1.dll`. The build script copies every DLL from that vcpkg runtime folder
+into `artifacts/raylib-angle-win-x64`.
+
+The script also packages available VC++ runtime DLLs such as:
+
+```text
+vcruntime140.dll
+vcruntime140_1.dll
+msvcp140.dll
+```
+
+This prevents `System.DllNotFoundException: Unable to load DLL 'raylib' or one
+of its dependencies (0x8007007E)` on machines that do not have the Visual C++
+Redistributable installed.
+
+CI also runs:
+
+```powershell
+.\artifacts\RaylibAngleSample\RaylibAngleSample.exe --load-test
+```
+
+That calls the first raylib P/Invoke without opening a window, so missing native
+dependencies fail during CI instead of only on the user's machine.

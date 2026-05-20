@@ -14,13 +14,12 @@
 
   <!--
     These native files are produced by .github/workflows/build-raylib-angle.yml.
-    They deliberately override the native raylib.dll that may come from the NuGet package.
+    Copy every packaged native DLL, not just raylib/libEGL/libGLESv2, because
+    vcpkg's x64-windows dynamic triplet can produce transitive runtime DLLs such
+    as zlib1.dll.  The build script may also package VC++ runtime DLLs.
   -->
   <ItemGroup>
-    <AngleNativeFile Include="native\win-x64\raylib.dll" Condition="Exists('native\win-x64\raylib.dll')" />
-    <AngleNativeFile Include="native\win-x64\libEGL.dll" Condition="Exists('native\win-x64\libEGL.dll')" />
-    <AngleNativeFile Include="native\win-x64\libGLESv2.dll" Condition="Exists('native\win-x64\libGLESv2.dll')" />
-    <AngleNativeFile Include="native\win-x64\d3dcompiler_47.dll" Condition="Exists('native\win-x64\d3dcompiler_47.dll')" />
+    <AngleNativeFile Include="native\win-x64\*.dll" Condition="Exists('native\win-x64\raylib.dll')" />
     <AngleNativeFile Include="native\win-x64\build-info.txt" Condition="Exists('native\win-x64\build-info.txt')" />
   </ItemGroup>
 

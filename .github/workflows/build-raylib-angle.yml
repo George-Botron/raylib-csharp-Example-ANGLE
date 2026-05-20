@@ -20,13 +20,19 @@ jobs:
     runs-on: windows-2025
 
     env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       VCPKG_ROOT: C:\vcpkg
       VCPKG_INSTALLATION_ROOT: C:\vcpkg
       VCPKG_DEFAULT_TRIPLET: x64-windows
 
     steps:
       - name: Checkout this repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
 
       - name: Validate repository files
         shell: pwsh
@@ -48,26 +54,8 @@ jobs:
           if ($buildText -notmatch 'GLFW_ANGLE_PLATFORM_TYPE_D3D11') { throw "scripts/build_raylib_angle.py must patch raylib to request GLFW_ANGLE_PLATFORM_TYPE_D3D11." }
           Write-Host "Repository file validation passed."
 
-      - name: Setup MSVC developer shell
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "10.0.x"
-
-      - name: Force vcpkg root after MSVC setup
-        shell: pwsh
-        run: |
-          "VCPKG_ROOT=C:\vcpkg" | Add-Content -Path $env:GITHUB_ENV
-          "VCPKG_INSTALLATION_ROOT=C:\vcpkg" | Add-Content -Path $env:GITHUB_ENV
-          "VCPKG_DEFAULT_TRIPLET=x64-windows" | Add-Content -Path $env:GITHUB_ENV
-
       - name: Restore vcpkg cache
-        id: restore-vcpkg-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             C:\vcpkg\installed
@@ -79,36 +67,28 @@ jobs:
             vcpkg-angle-${{ runner.os }}-
 
       - name: Install ANGLE from vcpkg
-        shell: pwsh
+        shell: cmd
         run: |
-          $ErrorActionPreference = "Stop"
-          if (-not (Test-Path C:\vcpkg\vcpkg.exe)) {
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          if not exist C:\vcpkg\vcpkg.exe (
             git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-            C:\vcpkg\bootstrap-vcpkg.bat
-          }
+            call C:\vcpkg\bootstrap-vcpkg.bat
+          )
           C:\vcpkg\vcpkg.exe install angle:x64-windows --vcpkg-root C:\vcpkg
 
-      - name: Save vcpkg cache
-        if: success() && steps.restore-vcpkg-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            C:\vcpkg\installed
-            C:\vcpkg\downloads
-            C:\Users\runneradmin\AppData\Local\vcpkg\archives
-          key: vcpkg-angle-${{ runner.os }}-x64-windows-chromium-7258-2
-
       - name: Build raylib ANGLE Direct3D11 native DLL
-        shell: pwsh
+        shell: cmd
         run: |
-          $ref = "${{ github.event.inputs.raylib_ref }}"
-          if ([string]::IsNullOrWhiteSpace($ref)) { $ref = "6.0" }
-          python scripts/build_raylib_angle.py --raylib-ref $ref --vcpkg-root C:\vcpkg --triplet x64-windows
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          set RAYLIB_REF=${{ github.event.inputs.raylib_ref }}
+          if "%RAYLIB_REF%"=="" set RAYLIB_REF=6.0
+          python scripts\build_raylib_angle.py --raylib-ref %RAYLIB_REF% --vcpkg-root C:\vcpkg --triplet x64-windows
 
       - name: Verify native raylib ANGLE output
-        shell: pwsh
-        run: python scripts/verify_angle_raylib.py
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          python scripts\verify_angle_raylib.py
 
       - name: Copy native DLLs into sample project
         shell: pwsh
@@ -122,14 +102,16 @@ jobs:
           dotnet restore src/RaylibAngleSample/RaylibAngleSample.csproj
           dotnet publish src/RaylibAngleSample/RaylibAngleSample.csproj -c Release -r win-x64 --self-contained false -o artifacts/RaylibAngleSample
 
-      - name: Verify sample output contains ANGLE files
+      - name: Verify sample output contains all packaged native files
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          python scripts\verify_angle_raylib.py --native-dir artifacts\RaylibAngleSample
+
+      - name: Run C# native load smoke test
         shell: pwsh
         run: |
-          $sampleOut = "artifacts/RaylibAngleSample"
-          foreach ($file in "raylib.dll", "libEGL.dll", "libGLESv2.dll") {
-            if (-not (Test-Path (Join-Path $sampleOut $file))) { throw "Missing $file in sample output: $sampleOut" }
-          }
-          Get-ChildItem $sampleOut | Format-Table Name, Length
+          & .\artifacts\RaylibAngleSample\RaylibAngleSample.exe --load-test
 
       - name: Package artifact
         shell: pwsh
@@ -141,7 +123,7 @@ jobs:
           Compress-Archive -Path package/* -DestinationPath raylib-angle-direct3d11-win-x64.zip -Force
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: raylib-angle-direct3d11-win-x64
           path: raylib-angle-direct3d11-win-x64.zip

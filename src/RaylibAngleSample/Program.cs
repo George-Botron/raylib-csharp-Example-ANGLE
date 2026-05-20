@@ -1,6 +1,15 @@
 using Raylib_cs;
 using static Raylib_cs.Raylib;
 
+if (args.Contains("--load-test", StringComparer.OrdinalIgnoreCase))
+{
+    // This forces the first raylib P/Invoke without opening a window.
+    // CI uses it to catch DllNotFoundException/missing transitive native DLLs.
+    SetConfigFlags(ConfigFlags.ResizableWindow);
+    Console.WriteLine("raylib native load test passed.");
+    return;
+}
+
 SetConfigFlags(ConfigFlags.ResizableWindow | ConfigFlags.VSyncHint);
 InitWindow(900, 520, "raylib-cs + raylib native ANGLE/Direct3D11 build");
 SetTargetFPS(60);

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Build raylib for Windows x64 using OpenGL ES 2.0 + ANGLE + Direct3D11.
 
-This script intentionally avoids hard-coded raylib line numbers.  It patches the
-checked-out raylib source by looking for semantic build/init points:
-  * the Windows CMake OpenGL link block in LibraryConfigurations.cmake
-  * the first raylib platform source file that calls glfwInit(...)
+Supported raylib refs in the workflow are 5.5 and 6.0.
 
-It is designed for GitHub Actions windows-2025 with MSVC, CMake and vcpkg.
+Important packaging rule:
+  The final C# app must contain raylib.dll and every non-system native DLL that
+  raylib/ANGLE depend on.  With vcpkg's dynamic Windows triplet this can include
+  transitive DLLs such as zlib1.dll, plus the Visual C++ runtime DLLs on machines
+  that do not already have the VC++ Redistributable installed.
 """
 from __future__ import annotations
 
@@ -15,7 +16,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 
@@ -45,7 +45,7 @@ def read_text(path: Path) -> str:
 
 
 def write_text(path: Path, text: str) -> None:
-    path.write_text(text, encoding="utf-8", newline="")
+    path.write_text(text, encoding="utf-8", newline="\n")
 
 
 def patch_library_config(raylib_dir: Path) -> None:
@@ -57,8 +57,6 @@ def patch_library_config(raylib_dir: Path) -> None:
         print(f"{path} already contains ANGLE Windows link patch.")
         return
 
-    # raylib 6.0 uses this Windows block for desktop OpenGL.  Replace just that block
-    # with an OpenGL ES branch that finds ANGLE's EGL/GLES libraries from vcpkg.
     pattern = re.compile(
         r"elseif\s*\(\s*WIN32\s*\)\s*"
         r"add_definitions\s*\(\s*-D_CRT_SECURE_NO_WARNINGS\s*\)\s*"
@@ -93,7 +91,6 @@ def patch_library_config(raylib_dir: Path) -> None:
 
 
 def candidate_glfw_sources(raylib_dir: Path) -> list[Path]:
-    # raylib 5/6 platform split: prefer the GLFW platform backend source.
     preferred = [
         raylib_dir / "src" / "platforms" / "rcore_desktop_glfw.c",
         raylib_dir / "src" / "rcore.c",
@@ -102,13 +99,15 @@ def candidate_glfw_sources(raylib_dir: Path) -> list[Path]:
     for p in preferred:
         if p.is_file():
             result.append(p)
-    # Fallback for future layout changes: scan raylib src but avoid vendored GLFW itself.
-    for p in (raylib_dir / "src").rglob("*.c"):
-        sp = str(p).replace("\\", "/")
-        if "/external/glfw/" in sp:
-            continue
-        if p not in result:
-            result.append(p)
+
+    src_dir = raylib_dir / "src"
+    if src_dir.is_dir():
+        for p in src_dir.rglob("*.c"):
+            sp = str(p).replace("\\", "/")
+            if "/external/glfw/" in sp:
+                continue
+            if p not in result:
+                result.append(p)
     return result
 
 
@@ -128,16 +127,8 @@ def patch_glfw_angle_hint(raylib_dir: Path) -> Path:
         "",
     ]
 
-    # Insert immediately before the raylib platform's glfwInit() call.  raylib 5.5/6.0
-    # place that call in src/platforms/rcore_desktop_glfw.c and it is commonly written
-    # as an if (!glfwInit()) guard, not as a standalone "glfwInit();" statement.  Do
-    # not require a semicolon; patch the line containing the real call.
     glfw_init_call = re.compile(r"\bglfwInit\s*\(\s*\)")
-    ignored_calls = (
-        "glfwInitHint",
-        "glfwInitAllocator",
-        "glfwInitVulkanLoader",
-    )
+    ignored_calls = ("glfwInitHint", "glfwInitAllocator", "glfwInitVulkanLoader")
 
     for path in candidate_glfw_sources(raylib_dir):
         text = read_text(path)
@@ -177,10 +168,73 @@ def copy_file(src: Path, dst: Path) -> None:
 
 
 def find_raylib_dll(build_dir: Path, configuration: str) -> Path:
-    candidates = sorted(build_dir.rglob("raylib.dll"), key=lambda p: (configuration.lower() not in str(p).lower(), len(str(p))))
+    candidates = sorted(
+        build_dir.rglob("raylib.dll"),
+        key=lambda p: (configuration.lower() not in str(p).lower(), len(str(p))),
+    )
     if not candidates:
         raise FileNotFoundError("raylib.dll was not produced.")
     return candidates[0]
+
+
+def copy_vcpkg_runtime_dlls(vcpkg_bin: Path, out_dir: Path) -> list[str]:
+    """Copy all dynamic-triplet runtime DLLs from vcpkg's bin folder.
+
+    vcpkg documents that Windows dynamic triplets such as x64-windows require the
+    needed DLL files to be next to the executable or on PATH.  Copying the full
+    installed/<triplet>/bin set is intentionally conservative and avoids missing
+    transitive DLLs such as zlib1.dll.
+    """
+    assert_dir(vcpkg_bin)
+    copied: list[str] = []
+    for dll in sorted(vcpkg_bin.glob("*.dll")):
+        copy_file(dll, out_dir / dll.name)
+        copied.append(dll.name)
+    if not copied:
+        raise RuntimeError(f"No runtime DLLs found in {vcpkg_bin}")
+    return copied
+
+
+def copy_visual_cpp_runtime_dlls(out_dir: Path) -> list[str]:
+    """Copy VC++ runtime DLLs when available.
+
+    The artifact is meant to run on machines that may not have the VC++
+    Redistributable installed.  MSVC builds with the default dynamic CRT import
+    vcruntime/msvcp DLLs, so package them when the runner exposes the redist dir.
+    """
+    copied: list[str] = []
+
+    candidate_dirs: list[Path] = []
+    redist_root = os.environ.get("VCToolsRedistDir")
+    if redist_root:
+        candidate_dirs.append(Path(redist_root) / "x64" / "Microsoft.VC143.CRT")
+        candidate_dirs.append(Path(redist_root) / "x64" / "Microsoft.VC142.CRT")
+
+    system32 = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32"
+    candidate_dirs.append(system32)
+
+    names = [
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "msvcp140.dll",
+        "msvcp140_1.dll",
+        "msvcp140_2.dll",
+        "concrt140.dll",
+    ]
+
+    for name in names:
+        for directory in candidate_dirs:
+            src = directory / name
+            if src.is_file():
+                copy_file(src, out_dir / name)
+                copied.append(name)
+                break
+
+    if copied:
+        print("Copied VC++ runtime DLLs: " + ", ".join(copied))
+    else:
+        print("WARNING: no VC++ runtime DLLs were copied. Target machines may need the VC++ Redistributable.")
+    return copied
 
 
 def main() -> int:
@@ -252,14 +306,12 @@ def main() -> int:
     ])
     run(["cmake", "--build", str(build_dir), "--config", args.configuration, "--parallel"])
 
-    # Clean output so stale DLLs cannot mask failures.
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     copy_file(find_raylib_dll(build_dir, args.configuration), out_dir / "raylib.dll")
-    copy_file(angle_bin / "libEGL.dll", out_dir / "libEGL.dll")
-    copy_file(angle_bin / "libGLESv2.dll", out_dir / "libGLESv2.dll")
+    copied_vcpkg_dlls = copy_vcpkg_runtime_dlls(angle_bin, out_dir)
 
     d3d_compiler = angle_bin / "d3dcompiler_47.dll"
     if d3d_compiler.is_file():
@@ -271,6 +323,8 @@ def main() -> int:
         else:
             print("WARNING: d3dcompiler_47.dll not found. Some ANGLE deployments may need it.")
 
+    copied_vc_runtime_dlls = copy_visual_cpp_runtime_dlls(out_dir)
+
     build_info = f"""raylib.ref={args.raylib_ref}
 platform=Desktop
 opengl.version=ES 2.0
@@ -281,6 +335,8 @@ angle.backend=GLFW_ANGLE_PLATFORM_TYPE_D3D11
 angle.hint.patch.file={patched_glfw_file.relative_to(raylib_dir).as_posix()}
 expected.raylib.import=libGLESv2.dll
 expected.runtime.dynamic=libEGL.dll
+packaging.vcpkg.bin.dlls={",".join(copied_vcpkg_dlls)}
+packaging.vc.runtime.dlls={",".join(copied_vc_runtime_dlls)}
 note=libEGL.dll may be loaded dynamically by GLFW's EGL backend; it is not required to appear in dumpbin /dependents raylib.dll.
 """
     write_text(out_dir / "build-info.txt", build_info)
