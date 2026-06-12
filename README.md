@@ -8,6 +8,8 @@ raylib-cs -> raylib.dll built for OpenGL ES 2.0 -> ANGLE libEGL/libGLESv2 -> Dir
 
 The C# code stays normal raylib-cs code. Direct3D is selected by the native `raylib.dll` you ship beside the C# app.
 
+The included sample uses `Raylib-cs` `8.0.0`, which targets `net8.0` / `net10.0` and matches the workflow's default native raylib `6.0` build.
+
 ## Why this is needed
 
 The normal raylib-cs native binary uses desktop OpenGL on Windows. That means old, broken, missing, or RDP-affected OpenGL drivers can cause app startup failures.
@@ -48,33 +50,32 @@ Go to:
 Actions -> Build raylib ANGLE Direct3D11 for raylib-cs -> Run workflow
 ```
 
-The workflow supports selecting either:
+The workflow builds native raylib:
 
 ```text
 6.0
-5.5
 ```
 
-The default is `6.0`. Use `5.5` if your raylib-cs/native interop target requires raylib 5.5-compatible native exports.
+`6.0` is the only workflow option because it matches the included `Raylib-cs` `8.0.0` sample.
 
 The workflow does this:
 
 1. Installs ANGLE using `vcpkg install angle:x64-windows`.
 2. Clones raylib.
 3. Patches raylib's Windows Desktop CMake link step with a whitespace-tolerant regex so `OPENGL_VERSION="ES 2.0"` links to `libEGL.lib` and `libGLESv2.lib`, not `opengl32.lib`.
-4. Patches the raylib GLFW platform source that actually contains `glfwInit()` (`src/platforms/rcore_desktop_glfw.c` in raylib 5.5/6.0) to request `GLFW_ANGLE_PLATFORM_TYPE_D3D11` before `glfwInit()`.
+4. Patches the raylib GLFW platform source that actually contains `glfwInit()` (`src/platforms/rcore_desktop_glfw.c` in raylib 6.0) to request `GLFW_ANGLE_PLATFORM_TYPE_D3D11` before `glfwInit()`.
 5. Builds `raylib.dll` as a shared library.
-5. Verifies `raylib.dll` directly depends on `libGLESv2.dll`, does not depend on `OPENGL32.dll`, and packages `libEGL.dll` beside it.
-6. Builds the included raylib-cs sample.
-7. Uploads a zip artifact.
+6. Verifies `raylib.dll` directly depends on `libGLESv2.dll`, does not depend on `OPENGL32.dll`, and packages `libEGL.dll` beside it.
+7. Builds the included `Raylib-cs` `8.0.0` sample.
+8. Uploads a zip artifact.
 
 ## Use the built Direct3D raylib in another C# project
 
-In your external project, keep using the normal raylib-cs NuGet package:
+In your external project, keep using the normal `Raylib-cs` NuGet package. For the current raylib 6.0 native build, use `Raylib-cs` `8.0.0`:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="Raylib-cs" Version="7.*" />
+  <PackageReference Include="Raylib-cs" Version="8.0.0" />
 </ItemGroup>
 ```
 
@@ -216,10 +217,10 @@ First verify dependencies with `dumpbin`. Then use Process Monitor to check whet
 
 ## Maintainer notes: previous patch failures
 
-The build has two intentional patches and both are now targeted at the real raylib 5.5/6.0 layout:
+The build has two intentional patches and both are targeted at the raylib 6.0 layout:
 
 1. `cmake/LibraryConfigurations.cmake` is patched so Windows Desktop + `OPENGL_VERSION="ES 2.0"` links against ANGLE's `libGLESv2.lib` / `libEGL.lib`, not `opengl32.lib`.
-2. `src/platforms/rcore_desktop_glfw.c` is patched before the real `glfwInit()` call so GLFW requests `GLFW_ANGLE_PLATFORM_TYPE_D3D11`. Earlier attempts incorrectly searched `src/rcore.c` or only matched a standalone `glfwInit();` line; raylib 5.5/6.0 use the platform-split backend and can write the call as `if (!glfwInit())`.
+2. `src/platforms/rcore_desktop_glfw.c` is patched before the real `glfwInit()` call so GLFW requests `GLFW_ANGLE_PLATFORM_TYPE_D3D11`. Earlier attempts incorrectly searched `src/rcore.c` or only matched a standalone `glfwInit();` line; raylib 6.0 uses the platform-split backend and can write the call as `if (!glfwInit())`.
 
 The verification step checks the output, not just the patch text: `raylib.dll` must import `libGLESv2.dll`, must not import `OPENGL32.dll`, and the packaged runtime must contain `libEGL.dll` / `libGLESv2.dll`.
 
