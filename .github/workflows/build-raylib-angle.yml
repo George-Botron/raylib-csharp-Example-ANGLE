@@ -10,13 +10,17 @@ on:
         type: choice
         options:
           - "6.0"
+          - "5.5"
+
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
 
 jobs:
   build:
     name: Build Windows x64 ANGLE raylib.dll and C# sample
-    runs-on: windows-2025
+    runs-on: windows-2025-vs2026
 
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -33,10 +37,79 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      - name: Create MSVC environment bootstrap
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          New-Item -ItemType Directory -Force -Path scripts | Out-Null
+
+          @'
+          @echo off
+          setlocal EnableExtensions
+
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
+
+          if "%VSINSTALL%"=="" (
+            echo Could not find Visual Studio with C++ x64 tools using vswhere.
+            exit /b 1
+          )
+
+          echo Using Visual Studio at: %VSINSTALL%
+          call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat"
+          endlocal & set "PATH=%PATH%" & set "INCLUDE=%INCLUDE%" & set "LIB=%LIB%" & set "LIBPATH=%LIBPATH%" & set "VCINSTALLDIR=%VCINSTALLDIR%" & set "VCToolsInstallDir=%VCToolsInstallDir%" & set "VCToolsRedistDir=%VCToolsRedistDir%" & set "WindowsSdkDir=%WindowsSdkDir%" & set "WindowsSDKVersion=%WindowsSDKVersion%"
+          '@ | Set-Content -Path scripts\enter_msvc.cmd -Encoding ASCII
+
+      - name: Patch build script for VS2026 runner
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $script = "scripts/build_raylib_angle.py"
+          if (-not (Test-Path $script)) { throw "Missing $script" }
+
+          $text = Get-Content $script -Raw
+
+          # VS2026 image does not have the Visual Studio 17 2022 CMake generator.
+          # Use Ninja after vcvars64.bat initializes the MSVC environment.
+          $text = [regex]::Replace(
+            $text,
+            '"-G",\s*"Visual Studio 17 2022",\s*"-A",\s*"x64",',
+            '"-G", "Ninja",',
+            1
+          )
+
+          # The old regex matched glfwInit() inside comments, e.g.
+          # "Elapsed time since glfwInit()". Anchor the match to real code lines.
+          $text = [regex]::Replace(
+            $text,
+            'glfw_init_call\s*=\s*re\.compile\(r"\\bglfwInit\\s\*\\\(\\s\*\\\)"\)',
+            'glfw_init_call = re.compile(r"^\s*(?:if\s*\(\s*!\s*)?glfwInit\s*\(\s*\)")',
+            1
+          )
+
+          Set-Content -Path $script -Value $text -NoNewline -Encoding UTF8
+
+          python -m py_compile scripts/build_raylib_angle.py
+
+          $patched = Get-Content $script -Raw
+          if ($patched -match 'Visual Studio 17 2022') {
+            throw "build_raylib_angle.py still contains Visual Studio 17 2022 generator."
+          }
+          if ($patched -notmatch '"-G", "Ninja"') {
+            throw "build_raylib_angle.py was not patched to use Ninja."
+          }
+          if ($patched -match 'glfw_init_call\s*=\s*re\.compile\(r"\\bglfwInit') {
+            throw "build_raylib_angle.py still has the loose glfwInit regex."
+          }
+
+          Write-Host "Patched build_raylib_angle.py for VS2026/Ninja and real-code glfwInit matching."
+
       - name: Validate repository files
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+
           foreach ($path in @(
             ".github/workflows/build-raylib-angle.yml",
             "scripts/build_raylib_angle.py",
@@ -45,12 +118,24 @@ jobs:
           )) {
             if (-not (Test-Path $path)) { throw "Missing required file: $path" }
           }
+
           python -m py_compile scripts/build_raylib_angle.py scripts/verify_angle_raylib.py
+
           $buildText = Get-Content "scripts/build_raylib_angle.py" -Raw
           $verifyText = Get-Content "scripts/verify_angle_raylib.py" -Raw
-          if ($buildText -match '(?m)^\s*-\s+name\s*:|(?m)^\s*jobs\s*:') { throw "scripts/build_raylib_angle.py contains YAML, not Python." }
-          if ($verifyText -match 'does not depend on libEGL\.dll') { throw "scripts/verify_angle_raylib.py still has the old broken libEGL direct-import check." }
-          if ($buildText -notmatch 'GLFW_ANGLE_PLATFORM_TYPE_D3D11') { throw "scripts/build_raylib_angle.py must patch raylib to request GLFW_ANGLE_PLATFORM_TYPE_D3D11." }
+
+          if ($buildText -match '(?m)^\s*-\s+name\s*:|(?m)^\s*jobs\s*:') {
+            throw "scripts/build_raylib_angle.py contains YAML, not Python."
+          }
+
+          if ($verifyText -match 'does not depend on libEGL\.dll') {
+            throw "scripts/verify_angle_raylib.py still has the old broken libEGL direct-import check."
+          }
+
+          if ($buildText -notmatch 'GLFW_ANGLE_PLATFORM_TYPE_D3D11') {
+            throw "scripts/build_raylib_angle.py must patch raylib to request GLFW_ANGLE_PLATFORM_TYPE_D3D11."
+          }
+
           Write-Host "Repository file validation passed."
 
       - name: Restore vcpkg cache
@@ -68,57 +153,72 @@ jobs:
       - name: Install ANGLE from vcpkg
         shell: cmd
         run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          call scripts\enter_msvc.cmd
+
           if not exist C:\vcpkg\vcpkg.exe (
             git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
             call C:\vcpkg\bootstrap-vcpkg.bat
           )
+
           C:\vcpkg\vcpkg.exe install angle:x64-windows --vcpkg-root C:\vcpkg
 
       - name: Build raylib ANGLE Direct3D11 native DLL
         shell: cmd
         run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          call scripts\enter_msvc.cmd
+
           set RAYLIB_REF=${{ github.event.inputs.raylib_ref }}
           if "%RAYLIB_REF%"=="" set RAYLIB_REF=6.0
+
           python scripts\build_raylib_angle.py --raylib-ref %RAYLIB_REF% --vcpkg-root C:\vcpkg --triplet x64-windows
 
       - name: Verify native raylib ANGLE output
         shell: cmd
         run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          call scripts\enter_msvc.cmd
           python scripts\verify_angle_raylib.py
 
       - name: Copy native DLLs into sample project
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           New-Item -ItemType Directory -Force -Path src/RaylibAngleSample/native/win-x64 | Out-Null
           Copy-Item artifacts/raylib-angle-win-x64/* src/RaylibAngleSample/native/win-x64/ -Force
 
       - name: Publish C# sample
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           dotnet restore src/RaylibAngleSample/RaylibAngleSample.csproj
           dotnet publish src/RaylibAngleSample/RaylibAngleSample.csproj -c Release -r win-x64 --self-contained false -o artifacts/RaylibAngleSample
 
       - name: Verify sample output contains all packaged native files
         shell: cmd
         run: |
-          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          call scripts\enter_msvc.cmd
           python scripts\verify_angle_raylib.py --native-dir artifacts\RaylibAngleSample
 
       - name: Run C# native load smoke test
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           & .\artifacts\RaylibAngleSample\RaylibAngleSample.exe --load-test
 
       - name: Package artifact
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           New-Item -ItemType Directory -Force -Path package | Out-Null
           Copy-Item artifacts/raylib-angle-win-x64 package/native -Recurse -Force
           Copy-Item artifacts/RaylibAngleSample package/RaylibAngleSample -Recurse -Force
-          if (Test-Path README.md) { Copy-Item README.md package/README.md -Force }
+
+          if (Test-Path README.md) {
+            Copy-Item README.md package/README.md -Force
+          }
+
           Compress-Archive -Path package/* -DestinationPath raylib-angle-direct3d11-win-x64.zip -Force
 
       - name: Upload artifact
