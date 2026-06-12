@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build raylib for Windows x64 using OpenGL ES 2.0 + ANGLE + Direct3D11.
 
-Supported raylib refs in the workflow are 5.5 and 6.0.
+The workflow builds raylib 6.0 to match Raylib-cs 8.0.0.
 
 Important packaging rule:
   The final C# app must contain raylib.dll and every non-system native DLL that
