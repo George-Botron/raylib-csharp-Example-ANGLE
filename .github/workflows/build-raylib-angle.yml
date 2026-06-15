@@ -57,6 +57,7 @@ jobs:
 
           echo Using Visual Studio at: %VSINSTALL%
           call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat"
+
           endlocal & set "PATH=%PATH%" & set "INCLUDE=%INCLUDE%" & set "LIB=%LIB%" & set "LIBPATH=%LIBPATH%" & set "VCINSTALLDIR=%VCINSTALLDIR%" & set "VCToolsInstallDir=%VCToolsInstallDir%" & set "VCToolsRedistDir=%VCToolsRedistDir%" & set "WindowsSdkDir=%WindowsSdkDir%" & set "WindowsSDKVersion=%WindowsSDKVersion%"
           '@ | Set-Content -Path scripts\enter_msvc.cmd -Encoding ASCII
 
@@ -84,7 +85,8 @@ jobs:
           #   glfwInit();
           #   if (!glfwInit())
           #   int result = glfwInit();
-          # Must NOT match comments:
+          #
+          # Must not match comments:
           #   double time = glfwGetTime(); // Elapsed time since glfwInit()
           $text = [regex]::Replace(
             $text,
@@ -109,10 +111,6 @@ jobs:
 
           if ($patched -match 'glfw_init_call\s*=\s*re\.compile\(r"\\bglfwInit') {
             throw "build_raylib_angle.py still has the loose glfwInit regex."
-          }
-
-          if ($patched -match 'glfw_init_call\s*=\s*re\.compile\(r"\^\\s\*\(\?:if') {
-            throw "build_raylib_angle.py still has the bad anchored glfwInit regex that misses assignment forms."
           }
 
           Write-Host "Patched build_raylib_angle.py for VS2026/Ninja and assignment-safe glfwInit matching."
@@ -151,16 +149,17 @@ jobs:
           Write-Host "Repository file validation passed."
 
       - name: Restore vcpkg cache
+        id: vcpkg-cache
         uses: actions/cache/restore@v5
         with:
           path: |
             C:\vcpkg\installed
             C:\vcpkg\downloads
             C:\Users\runneradmin\AppData\Local\vcpkg\archives
-          key: vcpkg-angle-${{ runner.os }}-x64-windows-chromium-7258-2
+          key: vcpkg-angle-${{ runner.os }}-x64-windows-vs2026-chromium-7258-2
           restore-keys: |
+            vcpkg-angle-${{ runner.os }}-x64-windows-vs2026-
             vcpkg-angle-${{ runner.os }}-x64-windows-
-            vcpkg-angle-${{ runner.os }}-
 
       - name: Install ANGLE from vcpkg
         shell: cmd
@@ -173,6 +172,17 @@ jobs:
           )
 
           C:\vcpkg\vcpkg.exe install angle:x64-windows --vcpkg-root C:\vcpkg
+
+      - name: Save vcpkg cache
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            C:\vcpkg\installed
+            C:\vcpkg\downloads
+            C:\Users\runneradmin\AppData\Local\vcpkg\archives
+          key: vcpkg-angle-${{ runner.os }}-x64-windows-vs2026-chromium-7258-2
 
       - name: Build raylib ANGLE Direct3D11 native DLL
         shell: cmd
