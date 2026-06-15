@@ -79,12 +79,17 @@ jobs:
             1
           )
 
-          # The old regex matched glfwInit() inside comments, e.g.
-          # "Elapsed time since glfwInit()". Anchor the match to real code lines.
+          # Fix glfwInit matching.
+          # Must match real code forms:
+          #   glfwInit();
+          #   if (!glfwInit())
+          #   int result = glfwInit();
+          # Must NOT match comments:
+          #   double time = glfwGetTime(); // Elapsed time since glfwInit()
           $text = [regex]::Replace(
             $text,
-            'glfw_init_call\s*=\s*re\.compile\(r"\\bglfwInit\\s\*\\\(\\s\*\\\)"\)',
-            'glfw_init_call = re.compile(r"^\s*(?:if\s*\(\s*!\s*)?glfwInit\s*\(\s*\)")',
+            'glfw_init_call\s*=\s*re\.compile\(r".*?glfwInit.*?"\)',
+            'glfw_init_call = re.compile(r"^\s*(?:(?:if\s*\(\s*!\s*)|(?:(?:[A-Za-z_][A-Za-z0-9_]*\s+)+[A-Za-z_][A-Za-z0-9_]*\s*=\s*)|)glfwInit\s*\(\s*\)")',
             1
           )
 
@@ -93,17 +98,24 @@ jobs:
           python -m py_compile scripts/build_raylib_angle.py
 
           $patched = Get-Content $script -Raw
+
           if ($patched -match 'Visual Studio 17 2022') {
             throw "build_raylib_angle.py still contains Visual Studio 17 2022 generator."
           }
+
           if ($patched -notmatch '"-G", "Ninja"') {
             throw "build_raylib_angle.py was not patched to use Ninja."
           }
+
           if ($patched -match 'glfw_init_call\s*=\s*re\.compile\(r"\\bglfwInit') {
             throw "build_raylib_angle.py still has the loose glfwInit regex."
           }
 
-          Write-Host "Patched build_raylib_angle.py for VS2026/Ninja and real-code glfwInit matching."
+          if ($patched -match 'glfw_init_call\s*=\s*re\.compile\(r"\^\\s\*\(\?:if') {
+            throw "build_raylib_angle.py still has the bad anchored glfwInit regex that misses assignment forms."
+          }
+
+          Write-Host "Patched build_raylib_angle.py for VS2026/Ninja and assignment-safe glfwInit matching."
 
       - name: Validate repository files
         shell: pwsh
