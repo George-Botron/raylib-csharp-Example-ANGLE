@@ -146,6 +146,18 @@ jobs:
             throw "scripts/build_raylib_angle.py must patch raylib to request GLFW_ANGLE_PLATFORM_TYPE_D3D11."
           }
 
+          if ($buildText -notmatch 'CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded') {
+            throw "scripts/build_raylib_angle.py must match Raylib-cs Windows MSVC runtime flags."
+          }
+
+          if ($buildText -notmatch 'CMAKE_POLICY_DEFAULT_CMP0091=NEW') {
+            throw "scripts/build_raylib_angle.py must enable CMP0091 for CMAKE_MSVC_RUNTIME_LIBRARY."
+          }
+
+          if ($verifyText -notmatch 'cmake\.msvc\.runtime\.library=MultiThreaded') {
+            throw "scripts/verify_angle_raylib.py must verify Raylib-cs-aligned runtime flags."
+          }
+
           Write-Host "Repository file validation passed."
 
       - name: Restore vcpkg cache

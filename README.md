@@ -64,8 +64,8 @@ The workflow does this:
 2. Clones raylib.
 3. Patches raylib's Windows Desktop CMake link step with a whitespace-tolerant regex so `OPENGL_VERSION="ES 2.0"` links to `libEGL.lib` and `libGLESv2.lib`, not `opengl32.lib`.
 4. Patches the raylib GLFW platform source that actually contains `glfwInit()` (`src/platforms/rcore_desktop_glfw.c` in raylib 6.0) to request `GLFW_ANGLE_PLATFORM_TYPE_D3D11` before `glfwInit()`.
-5. Builds `raylib.dll` as a shared library.
-6. Verifies `raylib.dll` directly depends on `libGLESv2.dll`, does not depend on `OPENGL32.dll`, and packages `libEGL.dll` beside it.
+5. Builds `raylib.dll` as a shared library with the same Windows MSVC runtime policy used by `Raylib-cs`: `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded` plus `CMAKE_POLICY_DEFAULT_CMP0091=NEW`.
+6. Verifies `raylib.dll` directly depends on `libGLESv2.dll`, does not depend on `OPENGL32.dll`, packages `libEGL.dll` beside it, and records the Raylib-cs-aligned CMake flags in `build-info.txt`.
 7. Builds the included `Raylib-cs` `8.0.0` sample.
 8. Uploads a zip artifact.
 
@@ -222,7 +222,7 @@ The build has two intentional patches and both are targeted at the raylib 6.0 la
 1. `cmake/LibraryConfigurations.cmake` is patched so Windows Desktop + `OPENGL_VERSION="ES 2.0"` links against ANGLE's `libGLESv2.lib` / `libEGL.lib`, not `opengl32.lib`.
 2. `src/platforms/rcore_desktop_glfw.c` is patched before the real `glfwInit()` call so GLFW requests `GLFW_ANGLE_PLATFORM_TYPE_D3D11`. Earlier attempts incorrectly searched `src/rcore.c` or only matched a standalone `glfwInit();` line; raylib 6.0 uses the platform-split backend and can write the call as `if (!glfwInit())`.
 
-The verification step checks the output, not just the patch text: `raylib.dll` must import `libGLESv2.dll`, must not import `OPENGL32.dll`, and the packaged runtime must contain `libEGL.dll` / `libGLESv2.dll`.
+The verification step checks the output, not just the patch text: `raylib.dll` must import `libGLESv2.dll`, must not import `OPENGL32.dll`, the packaged runtime must contain `libEGL.dll` / `libGLESv2.dll`, and `build-info.txt` must record the Raylib-cs-aligned Windows CMake flags.
 
 
 ## Notes about the Python build scripts
@@ -243,6 +243,8 @@ raylib.dll must import libGLESv2.dll
 raylib.dll must not import OPENGL32.dll
 libEGL.dll must be packaged beside raylib.dll
 libEGL.dll does not have to appear as a direct dumpbin dependency of raylib.dll
+build-info.txt must record CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+build-info.txt must record CMAKE_POLICY_DEFAULT_CMP0091=NEW
 ```
 
 

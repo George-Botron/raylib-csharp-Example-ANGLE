@@ -80,6 +80,9 @@ def main() -> int:
         "client.api=GLFW_OPENGL_ES_API",
         "angle.backend=GLFW_ANGLE_PLATFORM_TYPE_D3D11",
         "angle.hint.patch.file=",
+        "cmake.msvc.runtime.library=MultiThreaded",
+        "cmake.policy.default.CMP0091=NEW",
+        "cmake.minimum.required.version=3.15",
     ]
     for item in required:
         if item not in info:

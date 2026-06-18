@@ -301,6 +301,9 @@ def main() -> int:
         "-DOPENGL_VERSION=ES 2.0",
         "-DBUILD_SHARED_LIBS=ON",
         "-DBUILD_EXAMPLES=OFF",
+        "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+        "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
+        "-DCMAKE_MINIMUM_REQUIRED_VERSION=3.15",
         "-DUSE_AUDIO=ON",
         f"-DCMAKE_BUILD_TYPE={args.configuration}",
     ])
@@ -335,6 +338,9 @@ angle.backend=GLFW_ANGLE_PLATFORM_TYPE_D3D11
 angle.hint.patch.file={patched_glfw_file.relative_to(raylib_dir).as_posix()}
 expected.raylib.import=libGLESv2.dll
 expected.runtime.dynamic=libEGL.dll
+cmake.msvc.runtime.library=MultiThreaded
+cmake.policy.default.CMP0091=NEW
+cmake.minimum.required.version=3.15
 packaging.vcpkg.bin.dlls={",".join(copied_vcpkg_dlls)}
 packaging.vc.runtime.dlls={",".join(copied_vc_runtime_dlls)}
 note=libEGL.dll may be loaded dynamically by GLFW's EGL backend; it is not required to appear in dumpbin /dependents raylib.dll.
